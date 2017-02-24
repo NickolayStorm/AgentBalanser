@@ -23,6 +23,12 @@ use Mix.Config
 
 config :loadbalanser, manager_p_name: :manager
 
+config :logger,
+  backends: [:console],
+  format: "\n$time $metadata[$level] $levelpad$message\n",
+  compile_time_purge_level: :info
+
+
 # It is also possible to import configuration files, relative to this
 # directory. For example, you can emulate configuration per environment
 # by uncommenting the line below and defining dev.exs, test.exs and such.
