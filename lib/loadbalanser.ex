@@ -29,7 +29,7 @@ defmodule Manager do
                 Logger.info "Task registererd."
                 Agent.update(:tasks , fn lst -> [pid | lst] end)
             {:add_employer, e} when is_list(e) ->
-                Logger.info "Employers (#{e}) added."
+                Logger.info "Employers (#{inspect e}) added."
                 Agent.update(:employers , fn lst -> lst ++ e end)
             {:add_employer, e} ->
                 Agent.update(:employers , fn lst -> [e | lst] end)
@@ -40,7 +40,7 @@ defmodule Manager do
                 distribute_employers_initial()
             anyoneelse ->
                 IO.inspect anyoneelse
-            after 20_000 ->
+            after 10_000 ->
                 Logger.info "On timeout (10 sec)"
                 Logger.info "Registration finished "
                          #  &(&1) is 'identity'
@@ -71,9 +71,12 @@ defmodule Manager do
                                      (e, [t|ts]) -> send t, {:employer, e}
                                                     ts
                                   end)
-
-        tasks |> Stream.each(fn t -> send t, {:deal_finished, tasks} end)
-              |> Enum.to_list
+        # Little asyncronus
+        [fst | oth] = tasks
+        send fst, {:deal_finished, tasks}
+        Process.sleep(300)
+        oth |> Stream.each(fn t -> send t, {:deal_finished, tasks} end)
+            |> Enum.to_list
 
         wait_for_results()
     end
