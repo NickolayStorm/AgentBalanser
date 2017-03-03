@@ -2,35 +2,41 @@ defmodule TaskSpec do
     @doc """
     task: needed skill count for current task
     skill_sum: is Enum.sum employers
-    other_tasks: - pid-s of tasks-agents (include self() !!!)
+    remaining_tasks: - pid-s of tasks-agents (include self() !!!)
     employers: list should be sorted.
                It's reversed when skill_sum > task
     """
-    defstruct task: -1, employers: [], other_tasks: [], skill_sum: 0
+    defstruct task: 0,
+              employers: [],
+              all_tasks: [],
+              remaining_tasks: [],
+              skill_sum: 0
 end
 
 defprotocol TaskProto do
     @doc "set task; return new struct"
-    def set_task(it, task)
+    def set_its_task(it, task)
     @doc "push employer; return new struct"
     def push_employer(it, empl)
     @doc "pop employer; return {empl, struct}"
     def pop_employer(it)
     @doc "push list of other tasks; return new struct"
-    def push_other_tasks(it, tasks)
+    def push_remaining_tasks(it, tasks)
     @doc "pop other task; return ({empl, struct} | nil)"
-    def pop_other_task(it)
+    def pop_remaining_task(it)
     @doc "return abs(task-skill_sum)"
     def disbalance(it)
     @doc "true if skill_sum == task"
     def is_balanced(it)
+    @doc "Change first employees; return {its_updated, other_updated}"
+    def exchange(it, other)
 end
 
 defimpl TaskProto, for: TaskSpec do
     def disbalance(it) do
         abs(it.task - it.skill_sum)
     end
-    def set_task(it, task) do
+    def set_its_task(it, task) do
         %{it | task: task}
     end
     def push_employer(it, empl) do
@@ -56,23 +62,31 @@ defimpl TaskProto, for: TaskSpec do
                    skill_sum: it.skill_sum - e}
         }
     end
-    def push_other_tasks(it, tasks) do
-        %{it | other_tasks: it.other_tasks ++ tasks}
+    def push_remaining_tasks(it, tasks) do
+        %{it | remaining_tasks: it.remaining_tasks ++ tasks}
     end
-    def pop_other_task(it) do
-        case it.other_tasks do
+    def pop_remaining_task(it) do
+        case it.remaining_tasks do
             [] -> nil
             [t|tasks] ->
-                {t, %{it | other_tasks: tasks}}
+                {t, %{it | remaining_tasks: tasks}}
         end
     end
     def is_balanced it do
         it.task == it.skill_sum
     end
+    def exchange data, other do
+        {m_e, m_updated} = data  |> pop_employer
+        {o_e, o_updated} = other |> pop_employer
+        m_new = m_updated |> push_employer(o_e)
+        o_new = o_updated |> push_employer(m_e)
+        {m_new, o_new}
+    end
 end
 
 defmodule Tasks do
     require Logger
+    alias TaskProto, as: Tasks
 
     def start filename, server do
         task_data = initialize filename, server
@@ -83,8 +97,8 @@ defmodule Tasks do
         task_data = load_data filename
 
         manager = connect_to_server_node server
-        manager |> send {:register_task, self()}
-        manager |> send {:add_employer, task_data.employers}
+        send manager, {:register_task, self()}
+        send manager, {:add_employer, task_data.employers}
 
         # We sent all our employers to manager
         # So now we have zero employers
@@ -115,7 +129,7 @@ defmodule Tasks do
         receive do
             {:employer, empl} ->
                 Logger.info "Employer (#{empl}) added"
-                updated = task_data |> TaskProto.push_employer(empl)
+                updated = task_data |> Tasks.push_employer(empl)
                 initial_deal_employers updated
             {:deal_finished, tasks} ->
                 empls = task_data.employers
@@ -123,20 +137,20 @@ defmodule Tasks do
                 Logger.info "Received :deal_finished.\n"
                          <> "List of empls: #{inspect empls}\n"
                          <> "Task: #{task_data.task} (#{coef})"
-                updated = task_data |> TaskProto.push_other_tasks(tasks)
+                updated = task_data |> Tasks.push_remaining_tasks(tasks)
                 try_exchange(updated)
         end
     end
 
     def try_exchange task_data do
         Logger.info "try_exchange"
-        r = task_data |> TaskProto.pop_other_task
+        r = task_data |> Tasks.pop_remaining_task
         if is_nil(r) do
             Logger.info "We tried all tasks!"
             check_offers_finally(task_data)
         else
             {t, without_task} = r
-            Logger.info "Only #{length without_task.other_tasks} tasks left"
+            Logger.info "Only #{length without_task.remaining_tasks} tasks left"
             if t != self() do
                 send t, {:go_exchange, self(), without_task}
                 wait_agreement = fn itself ->
@@ -180,7 +194,7 @@ defmodule Tasks do
                          <> " #{List.first other_data.employers})."
                 if should_exchange?(task_data, other_data) do
                     Logger.info "We should exchange"
-                    {new, oth_new} = exchange(task_data, other_data)
+                    {new, oth_new} = Tasks.exchange(task_data, other_data)
                     send pid, {:go, self(), oth_new}
                     receive do
                         :done ->
@@ -214,13 +228,11 @@ defmodule Tasks do
                          <> "(#{List.first task_data.employers} and"
                          <> " #{List.first other_data.employers})."
                 if should_exchange?(task_data, other_data) do
-                    {new, oth_new} = exchange(task_data, other_data)
+                    {new, oth_new} = Tasks.exchange(task_data, other_data)
                     send pid, {:go, self(), oth_new}
                     receive do
                         :done ->
                             Logger.info "Exchange finished."
-                                     <> "Now me:    #{inspect new}"
-                                     <> "Now other: #{inspect oth_new}"
                             check_offers_finally(new)
                     after 1_000 ->
                             Logger.info "Exchange timeout."
@@ -231,33 +243,29 @@ defmodule Tasks do
                     check_offers_finally(task_data)
                 end
         after 2_000 ->
-            coef = task_data.skill_sum / task_data.task
-            Logger.info "I'm DONE."
-                     <> "List of empls: #{inspect task_data.employers}\n"
-                     <> "Task: #{task_data.task} (#{coef})"
+            job_is_done task_data
         end
     end
 
+    def job_is_done task_data do
+        coef = task_data.skill_sum / task_data.task
+        Logger.info "I'm DONE."
+                 <> "List of empls: #{inspect task_data.employers}\n"
+                 <> "Task: #{task_data.task} (#{coef})"
+    end
+
     def should_exchange? first, second do
-        {first_new, second_new} = exchange(first, second)
+        {first_new, second_new} = Tasks.exchange(first, second)
 
         old_disbalance = [first, second]
-                        |> Enum.map(&TaskProto.disbalance &1)
+                        |> Enum.map(&Tasks.disbalance &1)
                         |> Enum.sum
 
         new_disbalance = [first_new, second_new]
-                        |> Enum.map(&TaskProto.disbalance &1)
+                        |> Enum.map(&Tasks.disbalance &1)
                         |> Enum.sum
 
         new_disbalance < old_disbalance
-    end
-
-    def exchange data, other do
-        {m_e, m_updated} = data  |> TaskProto.pop_employer
-        {o_e, o_updated} = other |> TaskProto.pop_employer
-        m_new = m_updated |> TaskProto.push_employer(o_e)
-        o_new = o_updated |> TaskProto.push_employer(m_e)
-        {m_new, o_new}
     end
 
     def perfect_state _data do
