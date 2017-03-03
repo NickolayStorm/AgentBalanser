@@ -97,8 +97,8 @@ defmodule Tasks do
         task_data = load_data filename
 
         manager = connect_to_server_node server
-        send manager, {:register_task, self()}
-        send manager, {:add_employer, task_data.employers}
+        GenServer.cast(manager, {:register_task, self()})
+        GenServer.cast(manager, {:add_employer, task_data.employers})
 
         # We sent all our employers to manager
         # So now we have zero employers

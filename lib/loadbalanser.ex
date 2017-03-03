@@ -1,5 +1,8 @@
 defmodule Manager do
+    use GenServer
+
     require Logger
+
     @moduledoc """
     Documentation for Manager.
     """
@@ -13,55 +16,59 @@ defmodule Manager do
         :world
 
     """
+    @timeout 25_000
 
-    def start do
+    def start_link do
         name = Application.get_env(:loadbalanser, :manager_p_name)
-        :global.register_name(name, self())
-        Agent.start_link(fn -> [] end,  name: :tasks )
-        Agent.start_link(fn -> [] end,  name: :employers)
-        wait_for_separate_nodes()
+        {:ok, pid} = GenServer.start_link(__MODULE__, []) # state is tasks
+        :global.register_name(name, pid)
     end
 
-    def wait_for_separate_nodes do
-        receive do
-            {:pingme} -> Logger.info "PINGED!!!"
-            {:register_task, pid}  ->
-                Logger.info "Task registererd."
-                Agent.update(:tasks , fn lst -> [pid | lst] end)
-            {:add_employer, e} when is_list(e) ->
-                Logger.info "Employers (#{inspect e}) added."
-                Agent.update(:employers , fn lst -> lst ++ e end)
-            {:add_employer, e} ->
-                Agent.update(:employers , fn lst -> [e | lst] end)
-            :registration_finished ->
-                Logger.info "Registration finished "
-                         #  &(&1) is 'identity'
-                         <> "(Task count: #{length Agent.get(:tasks , &(&1))})"
-                distribute_employers_initial()
-            anyoneelse ->
-                IO.inspect anyoneelse
-            after 10_000 ->
-                Logger.info "On timeout (10 sec)"
-                Logger.info "Registration finished "
-                         #  &(&1) is 'identity'
-                         <> "(Task count: #{length Agent.get(:tasks , &(&1))})"
-                distribute_employers_initial()
-        end
-        # Remember: after all deals/balances/results
-        # we come back to this function
-        wait_for_separate_nodes()
-   end
+    def init(state) do
+        Agent.start_link(fn -> [] end,  name: :employers)
+        {:ok, state}
+    end
 
-   def wait_for_results do
-       receive do
-           msg -> IO.inspect msg
-       end
-   end
+    def handle_cast {:pingme}, state do
+        Logger.info "PINGED!!!"
+        {:noreply, state, @timeout}
+    end
 
-    def distribute_employers_initial do
-        tasks = Agent.get_and_update(:tasks,     fn l -> {l, []} end)
+    def handle_cast {:register_task, pid}, tasks do
+        Logger.info "Task registererd."
+        {:noreply, [pid | tasks], @timeout}
+    end
+
+    def handle_cast({:add_employer, e}, state) when is_list(e) do
+           Logger.info "Employers (#{inspect e}) added."
+           Agent.update(:employers , fn lst -> lst ++ e end)
+           {:noreply, state, @timeout}
+    end
+
+    def handle_cast {:add_employer, e}, state do
+        Agent.update(:employers , fn lst -> [e | lst] end)
+        {:noreply, state, @timeout}
+    end
+
+    def handle_cast :registration_finished, tasks do
+        Logger.info "Registration finished "
+                 #  &(&1) is 'identity'
+                 <> "(Task count: #{length tasks})"
+        distribute_employers_initial(tasks)
+        {:stop, :normal, []}
+    end
+
+    def handle_info :timeout, tasks do
+        Logger.info "On timeout (10 sec)"
+        Logger.info "Registration finished "
+                 #  &(&1) is 'identity'
+                 <> "(Task count: #{length tasks})"
+        distribute_employers_initial(tasks)
+        {:stop, :normal, []}
+    end
+
+    def distribute_employers_initial tasks do
         empls = Agent.get_and_update(:employers, fn l -> {l, []} end)
-
         # We hope len tasks < than len employers
         # TODO: Shit: we just need to send each employer to different tasks
         # And we have to repeat tasks while employers do not come to an end
@@ -77,7 +84,5 @@ defmodule Manager do
         Process.sleep(300)
         oth |> Stream.each(fn t -> send t, {:deal_finished, tasks} end)
             |> Enum.to_list
-
-        wait_for_results()
     end
 end
