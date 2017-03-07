@@ -82,7 +82,7 @@ defmodule Manager do
                     end)
         # Little asyncronus
         [fst | oth] = tasks
-        send fst, {:deal_finished, tasks}
+        GenFSM.send_event(fst, {:deal_finished, tasks})
         Process.sleep(300)
         oth |> Stream.each(&GenFSM.send_event(&1, {:deal_finished, tasks}))
             |> Enum.to_list

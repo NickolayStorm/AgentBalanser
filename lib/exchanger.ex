@@ -48,8 +48,6 @@ defmodule Exchanger do
 
     def init(task_data) do
         {:ok, :initial_deal_employers, task_data}
-        # send self(), :piy
-        # {:ok, :piy, task_data, @empl_deal_timeout}
     end
 
     def initial_deal_employers({:employer, empl}, task_data) do
@@ -83,18 +81,15 @@ defmodule Exchanger do
         r = task_data |> Tasks.pop_remaining_task
         if is_nil(r) do
             Logger.info "We tried all tasks!"
-            # check_offers_finally(task_data)
             {:next_state, :check_offers_finally,
              task_data, @check_offers_finally_timeout}
         else
             {t, without_task} = r
-            Logger.info "Only #{length without_task.remaining_tasks} tasks left"
+            Logger.info "Only #{length(without_task.remaining_tasks)+1} tasks left"
             if t != self() do
-                # send t, {:go_exchange, self(), without_task}
-                GenFSM.send_event(t, {:go_exchange, without_task})
+                GenFSM.send_event(t, {:go_exchange, self(), without_task})
                 {:next_state, :wait_agreement, without_task,
                  @wait_agreement_timeout}
-                 # receive .....
             else
                 try_exchange(without_task)
             end
@@ -103,52 +98,38 @@ defmodule Exchanger do
 
     def wait_agreement(:no, without_task) do
         Logger.info "We don't go exchange"
-        # check_offers(without_task)
         {:next_state, :check_offers, without_task, @check_offers_timeout}
     end
 
     def wait_agreement(:timeout, without_task) do
-        # check_offers(without_task)
         {:next_state, :check_offers, without_task, @check_offers_timeout}
     end
 
-    def wait_agreement(msg, without_task) do
-        IO.puts "Ignored #{inspect msg}"
-        # itself.(itself)
-        {:next_state,
-         :wait_agreement,
-         without_task,
-         @wait_agreement_timeout}
-    end
-
-    def wait_agreement({:go, new_data}, from, _) do
+    def wait_agreement({:go, from, new_data}, _) do
         Logger.info "go exchenge (is's agrement)!"
         GenFSM.send_event(from, :done)
         {:next_state, :check_offers, new_data,
         @check_offers_timeout}
     end
 
-    def wait_agreement({:go_exchange, _task}, from, without_task) do
+    def wait_agreement({:go_exchange, from, _task}, without_task) do
         Logger.info "I'm busy"
-        # send pid, :busy
-        # itself.(itself)
-        GenFSM.send_event(from, :busy)
+        GenFSM.send_event(from, {:busy, self()})
         {:next_state,
         :wait_agreement, without_task,
         @wait_agreement_timeout}
     end
 
-    def wait_agreement(:busy, from, without_task) do
+    def wait_agreement({:busy, from}, without_task) do
         Logger.info "It's busy"
         Process.sleep(100)
-        # check_offers(task_data)
         task_data = without_task
                  |> Tasks.push_remaining_tasks([from])
         {:next_state, :check_offers,
         task_data, @check_offers_timeout}
     end
 
-    def check_offers({:go_exchange, other_data}, from, task_data) do
+    def check_offers({:go_exchange, from, other_data}, task_data) do
         Logger.info "check_offers"
         Logger.info "Received offer "
                  <> "(#{List.first task_data.employers} and"
@@ -156,15 +137,12 @@ defmodule Exchanger do
         if should_exchange?(task_data, other_data) do
             Logger.info "We should exchange"
             {new, oth_new} = Tasks.exchange(task_data, other_data)
-            # send pid, {:go, self(), oth_new}
-            # receive ...
-            GenFSM.send_event(from, {:go, oth_new})
+            GenFSM.send_event(from, {:go, self(), oth_new})
             {:next_state,
              :make_offer, {task_data, new},
              @make_offer_timeout}
         else
             Logger.info "We shouldn't exchange"
-            # send pid, :no
             GenFSM.send_event(from, :no)
             try_exchange(task_data)
         end
@@ -174,7 +152,6 @@ defmodule Exchanger do
 
     def check_offers(msg, task_data) do
         IO.puts "Ignored #{inspect msg}"
-        #    IO.puts "Ignored #{inspect msg}"
         {:next_state, :check_offers, task_data, @check_offers_timeout}
     end
 
@@ -188,41 +165,34 @@ defmodule Exchanger do
         try_exchange(task_data)
     end
 
+    def make_offer({:go_exchange, from, _data}, {task_data, new}) do
+        # We shouldn't update timer
+        GenFSM.send_event(from, :busy)
+        {:next_state,
+         :make_offer, {task_data, new}
+        }
+    end
+
     def make_offer msg, {task_data, new} do
         IO.puts "Ignored #{inspect msg}"
         # We shouldn't update timer
         {:next_state,
          :make_offer, {task_data, new},
-         @make_offer_timeout
         }
     end
 
-    def make_offer({:go_exchange, _data}, from, {task_data, new}) do
-        # send pid, :busy
-        # We shouldn't update timer
-        GenFSM.send_event(from, :busy)
-        {:next_state,
-         :make_offer, {task_data, new},
-         @make_offer_timeout
-        }
-    end
-
-    def check_offers_finally({:go_exchange, other_data}, from, task_data) do
+    def check_offers_finally({:go_exchange, from, other_data}, task_data) do
         Logger.info "Received offer "
                  <> "(#{List.first task_data.employers} and"
                  <> " #{List.first other_data.employers})."
         if should_exchange?(task_data, other_data) do
             {new, oth_new} = Tasks.exchange(task_data, other_data)
-            # send pid, {:go, self(), oth_new}
-            GenFSM.send_event(from, {:go, oth_new})
+            GenFSM.send_event(from, {:go, self(), oth_new})
             {:next_state,
              :make_offer_finally,
              {task_data, new},
              @check_offers_timeout}
-            # receive ....
         else
-            # send pid, :no
-            # check_offers_finally(task_data)
             GenFSM.send_event(from, :no)
             {:next_state,
              :check_offers_finally, task_data,
@@ -236,7 +206,6 @@ defmodule Exchanger do
 
     def make_offer_finally :done, {_, new_data} do
         Logger.info "Exchange finished."
-        # check_offers_finally(new)
         {:next_state, :check_offers_finally,
         new_data, @check_offers_finally_timeout}
     end
@@ -249,17 +218,16 @@ defmodule Exchanger do
 
     def make_offer_finally msg, {old, new} do
         Logger.info "Ignored: #{inspect msg}"
-        # check_offers_finally(new)
         # We shouldn't update timer
         {:next_state,
-        :make_offer_finally, {old, new},
-        @make_offer_timeout}
+        :make_offer_finally, {old, new}}
     end
 
-    def handle_info info, statename, _statedata do
+    def handle_info info, statename, state do
         IO.puts "HANDLE_INFO"
         IO.inspect(info)
         IO.inspect(statename)
+        {:stop, :terminate, state}
     end
 
     def job_is_done task_data do
