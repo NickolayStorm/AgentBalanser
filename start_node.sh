@@ -5,7 +5,7 @@ COOCIE=1488228228
 node_number=$1
 ip=$2
 
-CMD="spawn_link fn -> Tasks.start \"node$node_number.json\", :\"server@$ip\" end"
+CMD="n = Exchanger.start_link \"node$node_number.json\", :\"server@$ip\""
 
 echo "Server IP address: $ip"
 

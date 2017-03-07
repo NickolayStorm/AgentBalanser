@@ -16,7 +16,8 @@ defmodule Manager do
         :world
 
     """
-    @timeout 25_000
+    # @timeout 25_000
+    @timeout 15_000
 
     def start_link do
         name = Application.get_env(:loadbalanser, :manager_p_name)
@@ -72,17 +73,18 @@ defmodule Manager do
         # We hope len tasks < than len employers
         # TODO: Shit: we just need to send each employer to different tasks
         # And we have to repeat tasks while employers do not come to an end
-        Enum.reduce(empls, tasks, fn (e, []    ) -> [t|ts] = tasks
-                                                    send t, {:employer, e}
-                                                    ts
-                                     (e, [t|ts]) -> send t, {:employer, e}
-                                                    ts
-                                  end)
+        Enum.reduce(empls, tasks,
+                    fn (e, []    ) -> [t|ts] = tasks
+                                      t |> GenFSM.send_event {:employer, e}
+                                      ts
+                       (e, [t|ts]) -> t |> GenFSM.send_event {:employer, e}
+                                      ts
+                    end)
         # Little asyncronus
         [fst | oth] = tasks
-        send fst, {:deal_finished, tasks}
+        GenFSM.send_event(fst, {:deal_finished, tasks})
         Process.sleep(300)
-        oth |> Stream.each(fn t -> send t, {:deal_finished, tasks} end)
+        oth |> Stream.each(&GenFSM.send_event(&1, {:deal_finished, tasks}))
             |> Enum.to_list
     end
 end
