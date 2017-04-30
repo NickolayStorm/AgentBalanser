@@ -51,17 +51,15 @@ defmodule Exchanger do
     end
 
     def initial_deal_employers({:employer, empl}, task_data) do
-        Logger.info "Employer (#{empl}) added"
+        Logger.info "Employer (#{inspect empl}) added"
         updated = task_data |> Tasks.push_employer(empl)
         {:next_state, :initial_deal_employers, updated}
     end
 
     def initial_deal_employers({:deal_finished, tasks}, task_data) do
-        empls = task_data.employers
-        coef = task_data.skill_sum / task_data.task
         Logger.info "Received :deal_finished.\n"
-                 <> "List of empls: #{inspect empls}\n"
-                 <> "Task: #{task_data.task} (#{coef})"
+                #  <> "List of empls: #{inspect empls}\n"
+                #  <> "Task: #{task_data.task} (#{coef})"
         updated = task_data |> Tasks.push_remaining_tasks(tasks)
         try_exchange(updated)
     end
@@ -131,16 +129,13 @@ defmodule Exchanger do
 
     def check_offers({:go_exchange, from, other_data}, task_data) do
         Logger.info "check_offers"
-        Logger.info "Received offer "
-                 <> "(#{List.first task_data.employers} and"
-                 <> " #{List.first other_data.employers})."
         if should_exchange?(task_data, other_data) do
-            Logger.info "We should exchange"
-            {new, oth_new} = Tasks.exchange(task_data, other_data)
-            GenFSM.send_event(from, {:go, self(), oth_new})
-            {:next_state,
-             :make_offer, {task_data, new},
-             @make_offer_timeout}
+            # Logger.info "We should exchange"
+            # {new, oth_new} = Tasks.exchange(task_data, other_data)
+            # GenFSM.send_event(from, {:go, self(), oth_new})
+            # {:next_state,
+            #  :make_offer, {task_data, new},
+            #  @make_offer_timeout}
         else
             Logger.info "We shouldn't exchange"
             GenFSM.send_event(from, :no)
@@ -161,7 +156,6 @@ defmodule Exchanger do
     end
 
     def make_offer(:timeout,  {task_data, _}) do
-        # Maybe wrong
         try_exchange(task_data)
     end
 
@@ -183,21 +177,22 @@ defmodule Exchanger do
 
     def check_offers_finally({:go_exchange, from, other_data}, task_data) do
         Logger.info "Received offer "
-                 <> "(#{List.first task_data.employers} and"
-                 <> " #{List.first other_data.employers})."
-        if should_exchange?(task_data, other_data) do
-            {new, oth_new} = Tasks.exchange(task_data, other_data)
-            GenFSM.send_event(from, {:go, self(), oth_new})
-            {:next_state,
-             :make_offer_finally,
-             {task_data, new},
-             @check_offers_timeout}
-        else
-            GenFSM.send_event(from, :no)
-            {:next_state,
-             :check_offers_finally, task_data,
-             @check_offers_finally_timeout}
-        end
+        # case Tasks.try_exchange do
+        #
+        # end
+        # if should_exchange?(task_data, other_data) do
+            # {new, oth_new} = Tasks.exchange(task_data, other_data)
+            # GenFSM.send_event(from, {:go, self(), oth_new})
+            # {:next_state,
+            #  :make_offer_finally,
+            #  {task_data, new},
+            #  @check_offers_timeout}
+        # else
+        #     GenFSM.send_event(from, :no)
+        #     {:next_state,
+        #      :check_offers_finally, task_data,
+        #      @check_offers_finally_timeout}
+        # end
     end
 
     def check_offers_finally :timeout, task_data do
@@ -231,25 +226,33 @@ defmodule Exchanger do
     end
 
     def job_is_done task_data do
-        coef = task_data.skill_sum / task_data.task
+        sql   = Enum.map(task_data.employers, fn x -> x.sql      end)
+             |> Enum.sum
+        front = Enum.map(task_data.employers, fn x -> x.frontend end)
+             |> Enum.sum
+        back  = Enum.map(task_data.employers, fn x -> x.backend  end)
+             |> Enum.sum
         Logger.info "I'm DONE."
                  <> "List of empls: #{inspect task_data.employers}\n"
-                 <> "Task: #{task_data.task} (#{coef})"
+                 <> "Skills: sql: #{inspect sql}"
+                 <> "        frontend: #{inspect front}"
+                 <> "        backend: #{inspect back}"
         {:stop, :normal, task_data}
     end
 
-    defp should_exchange? first, second do
-        {first_new, second_new} = Tasks.exchange(first, second)
-
-        old_disbalance = [first, second]
-                        |> Enum.map(&Tasks.disbalance &1)
-                        |> Enum.sum
-
-        new_disbalance = [first_new, second_new]
-                        |> Enum.map(&Tasks.disbalance &1)
-                        |> Enum.sum
-
-        new_disbalance < old_disbalance
+    defp should_exchange? _first, _second do
+        :false
+        # {first_new, second_new} = Tasks.exchange(first, second)
+        #
+        # old_disbalance = [first, second]
+        #                 |> Enum.map(&Tasks.disbalance &1)
+        #                 |> Enum.sum
+        #
+        # new_disbalance = [first_new, second_new]
+        #                 |> Enum.map(&Tasks.disbalance &1)
+        #                 |> Enum.sum
+        #
+        # new_disbalance < old_disbalance
     end
 
     defp load_data filename do
@@ -258,9 +261,16 @@ defmodule Exchanger do
     end
 
     defp parse_data kw do
+        emp_lst = kw["employers"]
+        empls = Enum.map(emp_lst, fn dct ->
+            %Employer{
+                sql: dct["sql"],
+                frontend: dct["frontend"],
+                backend: dct["backend"]
+            }
+        end)
         %TaskSpec{
-            employers: kw["employers"],
-            task:      kw["task"]
+            employers: empls
         }
     end
 end
