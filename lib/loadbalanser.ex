@@ -70,21 +70,8 @@ defmodule Manager do
 
     def distribute_employers_initial tasks do
         empls = Agent.get_and_update(:employers, fn l -> {l, []} end)
-        # We hope len tasks < than len employers
-        # TODO: Shit: we just need to send each employer to different tasks
-        # And we have to repeat tasks while employers do not come to an end
-        Enum.reduce(empls, tasks,
-                    fn (e, []    ) -> [t|ts] = tasks
-                                      t |> GenFSM.send_event {:employer, e}
-                                      ts
-                       (e, [t|ts]) -> t |> GenFSM.send_event {:employer, e}
-                                      ts
-                    end)
-        # Little asyncronus
-        [fst | oth] = tasks
-        GenFSM.send_event(fst, {:deal_finished, tasks})
-        Process.sleep(300)
-        oth |> Stream.each(&GenFSM.send_event(&1, {:deal_finished, tasks}))
-            |> Enum.to_list
+        proc_empls = empls |> Enum.map(&Employer.start_link(&1))
+        tasks |> Stream.each(&GenFSM.send_event(&1, {:empls, proc_empls}))
+              |> Enum.to_list
     end
 end

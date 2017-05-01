@@ -178,7 +178,8 @@ defmodule Exchanger do
     def check_offers_finally({:go_exchange, from, other_data}, task_data) do
         Logger.info "Received offer "
         # case Tasks.try_exchange do
-        #
+        #     :false ->
+        #     {:true, }
         # end
         # if should_exchange?(task_data, other_data) do
             # {new, oth_new} = Tasks.exchange(task_data, other_data)
@@ -263,7 +264,7 @@ defmodule Exchanger do
     defp parse_data kw do
         emp_lst = kw["employers"]
         empls = Enum.map(emp_lst, fn dct ->
-            %Employer{
+            %EmployerData{
                 sql: dct["sql"],
                 frontend: dct["frontend"],
                 backend: dct["backend"]
