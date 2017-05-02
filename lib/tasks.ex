@@ -16,10 +16,11 @@ defprotocol TaskProto do
              False              otherwise
     """
     def try_exchange(it, empl)
-    def push_employer(it, empl)
+    def push_employers(it, empls)
     def push_remaining_tasks(it, tasks)
     def pop_remaining_task(it)
     def rollback_tasks(it)
+    def estim(it)
 end
 
 defimpl TaskProto, for: TaskSpec do
@@ -30,8 +31,8 @@ defimpl TaskProto, for: TaskSpec do
     def rollback_tasks(it) do
         %{it | remaining_task: it.all_tasks}
     end
-    def push_employer(it, empl) do
-        %{it | employers: [empl | it.employers]}
+    def push_employers(it, empl) do
+        %{it | employers: [empl] + [it.employers]}
     end
     def push_remaining_tasks(it, tasks) do
         %{it | remaining_tasks: it.remaining_tasks ++ tasks}
@@ -42,6 +43,10 @@ defimpl TaskProto, for: TaskSpec do
             [t|tasks] ->
                 {t, %{it | remaining_tasks: tasks}}
         end
+    end
+
+    def estim(it) do
+        Enum.map(it.employers, fn(x)->x.sql + x.frontend + x.backend end) |> Enum.sum
     end
 
 end

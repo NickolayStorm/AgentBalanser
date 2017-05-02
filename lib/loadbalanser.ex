@@ -27,6 +27,8 @@ defmodule Manager do
 
     def init(state) do
         Agent.start_link(fn -> [] end,  name: :employers)
+        Agent.start_link(fn -> [] end,  name: {:global, :tasks})
+
         {:ok, state}
     end
 
@@ -56,13 +58,24 @@ defmodule Manager do
                  #  &(&1) is 'identity'
                  <> "(Task count: #{length tasks})"
         distribute_employers_initial(tasks)
-        {:stop, :normal, []}
+        Agent.update(:employers, fn _ -> [] end)
+        {:noreply, [], :infinitie}
     end
+
+    # def handle_cast({:reg_task, task}, tasks) do
+    #     Logger.info "Task registred"
+    #     {:noreply, [task | tasks], @timeout}
+    # end
+    #
+    # def handle_cast(:timeout, tasks) do
+    #     Logger.info "Before sending events"
+    #     Enum.map(tasks, &GenFSM.send_event(&1, {:processes, tasks}))
+    #     {:noreply, [], @timeout}
+    # end
 
     def handle_info :timeout, tasks do
         Logger.info "On timeout (10 sec)"
         Logger.info "Registration finished "
-                 #  &(&1) is 'identity'
                  <> "(Task count: #{length tasks})"
         distribute_employers_initial(tasks)
         {:stop, :normal, []}

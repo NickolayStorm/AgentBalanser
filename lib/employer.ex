@@ -24,12 +24,10 @@ defmodule Employer do
     def wait_invitation(:timeout, {data, invitations}) do
         Logger.info "Перестали ждать работников"
         # If not empty
-        Logger.info "#{inspect invitations}"
         sorted = sort_by_skill(invitations)
-        Logger.info "Sorted"
         [pid | other] = sorted
         Logger.info "разложено"
-        Gen_FSM.send_event(pid, {:go, data, self()})
+        GenFSM.send_event(pid, {:go, data, self()})
         Logger.info "Sent"
         {
             :next_state, :wait_command_agreement,
@@ -49,36 +47,36 @@ defmodule Employer do
     end
 
     def sort_by_skill invitations do
+        # Logger.info "Sort by skill"
         pairs = invitations
              |> Enum.map(
                 fn pid ->
-                     empls = pid |> GenFSM.sync_send_all_state_event(:send_me_list)
-                     Logger.info "Empls in curr pid #{empls}"
+                    #  Logger.info "Allo"
+                     empls = pid |> GenFSM.sync_send_all_state_event(:send_me_list, 10_000)
                      case empls do
                          [] -> {pid, 0}
                          lst ->
+                             sql = Enum.sum(Enum.map(lst, fn e -> e.sql      end))
+                             front = Enum.sum(Enum.map(lst, fn e -> e.frontend end))
                              {
                                  pid,
-                                 Enum.sum(Enum.map(lst, fn e -> e.sql      end)) +
-                                 Enum.sum(Enum.map(lst, fn e -> e.frontend end)) +
-                                 Enum.sum(Enum.map(lst, fn e -> e.backend  end))
+                                 front + sql +
+                                 Enum.sum(Enum.map(lst, fn e -> e.backend  end)) / length(lst)
                              }
                      end
                  end
              )
-         Logger.info("After")
          sorted_pairs = pairs |> Enum.sort_by(
                          fn {_, sum} -> sum end
                      )
-         Logger.info("After2")
          sorted = sorted_pairs |> Enum.map(fn {pid, _} -> pid end)
-         Logger.info("Result: #{sorted}")
          sorted
     end
 
     def wait_command_agreement({:ok, from}, data) do
         Logger.info "Employer #{inspect self()} "
                  <> "was connected to command #{inspect from}"
+                 <> "\nStop process."
         {:stop, :normal, data}
     end
 
@@ -86,7 +84,7 @@ defmodule Employer do
         Logger.info "Employer #{inspect self()} "
                  <> "received renouncement from command #{inspect from}"
         [pid | other] = sort_by_skill(invitations)
-        Gen_FSM.send_event(pid, {:go, data, self()})
+        GenFSM.send_event(pid, {:go, data, self()})
         {
             :next_state, :wait_command_agreement,
             {data, other},
@@ -104,7 +102,7 @@ defmodule Employer do
                       :stop, {:shutdown, :error}, nil
                   }
             [pid | other] -> sort_by_skill(invitations)
-                Gen_FSM.send_event(pid, {:go, data, self()})
+                GenFSM.send_event(pid, {:go, data, self()})
                 {
                     :next_state, :wait_command_agreement,
                     {data, other},

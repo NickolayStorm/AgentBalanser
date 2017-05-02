@@ -31,6 +31,7 @@ defmodule Commands do
                   Process.sleep(1000 + 100 * time)
                   connect_to_server_node(server, time + 1)
                 pid        ->
+                  Agent.start_link(fn -> pid end, name: :manager)
                   IO.puts "Connection succesfull."
                   pid
             end
@@ -50,7 +51,7 @@ defmodule Commands do
             GenFSM.send_event(e, {:invite, self()}) end)
         {
             :next_state, :wait_agreement,
-            empls,
+            [],
             @timeout
         }
     end
@@ -82,12 +83,21 @@ defmodule Commands do
     end
 
     def wait_agreement(:timeout, empls) do
-        # TODO: start_task
+        Logger.info "Wait agreement timeout"
+        task_data = %TaskSpec{
+                    employers: empls
+                }
+        ex = Exchanger.start_link(task_data)
+        # Logger.info "Before agent update"
+        Agent.update({:global, :tasks}, fn lst -> [ex | lst] end)
+        Logger.info "Inintial command finished"
         {:stop, :normal, empls}
     end
 
-    def handle_sync_event(:send_me_list, state, data) do
-        {:next_state, data, state, data, @timeout}
+    def handle_sync_event(:send_me_list, _from, state, data) do
+        Logger.info "Sending list"
+        # {reply,Reply,NextStateName,NewStateData,Timeout}
+        {:reply, data, state, data, @timeout}
     end
 
     defp load_data filename do

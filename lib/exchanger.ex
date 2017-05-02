@@ -9,69 +9,29 @@ defmodule Exchanger do
     @make_offer_timeout           1_000
     @check_offers_finally_timeout 2_000
 
-    def start_link filename, server do
-        {manager, task_data} = initialize filename, server
-        {:ok, pid} = GenFSM.start_link(__MODULE__, task_data)
-        GenServer.cast(manager, {:register_task, pid})
+    def start_link task_data do
+        Logger.info "Exchanger.start_link start"
+        {:ok, pid} = GenFSM.start_link(__MODULE__, task_data, [{:debug, [:log, :trace]}])
+        Logger.info "Exchanger.start_link finish"
         pid
     end
 
-    defp initialize filename, server do
-        task_data = load_data filename
-
-        manager = connect_to_server_node server
-        GenServer.cast(manager, {:add_employer, task_data.employers})
-        # We sent all our employers to manager
-        # So now we have zero employers
-        {manager, %{task_data | employers: []}}
-    end
-
-    defp connect_to_server_node server, time \\ 1 do
-        IO.puts "Try to connect #{time} time."
-        is_ok = Node.connect server
-        if is_ok do
-            manager = Application.get_env(:loadbalanser, :manager_p_name)
-                     |> :global.whereis_name
-            case manager do
-                :undefined ->
-                  Process.sleep(1000 + 100 * time)
-                  connect_to_server_node(server, time + 1)
-                pid        ->
-                  IO.puts "Connection succesfull."
-                  pid
-            end
-        else
-            IO.puts "Connection failed. Try again..."
-            connect_to_server_node(server, time + 1)
-        end
-    end
-
     def init(task_data) do
-        {:ok, :initial_deal_employers, task_data}
+        Logger.info "Exchanger.init"
+        {:ok, :wait_send_processes, task_data, 3_000}
     end
 
-    def initial_deal_employers({:employer, empl}, task_data) do
-        Logger.info "Employer (#{inspect empl}) added"
-        updated = task_data |> Tasks.push_employer(empl)
-        {:next_state, :initial_deal_employers, updated}
-    end
-
-    def initial_deal_employers({:deal_finished, tasks}, task_data) do
-        Logger.info "Received :deal_finished.\n"
-                #  <> "List of empls: #{inspect empls}\n"
-                #  <> "Task: #{task_data.task} (#{coef})"
-        updated = task_data |> Tasks.push_remaining_tasks(tasks)
+    def wait_send_processes(:timeout, task_data) do
+        Logger.info "On timeout"
+        tasks = Agent.get_and_update({:global, :tasks}, fn lst -> {lst, lst} end)
+        updated = task_data |> Tasks.push_remaining_tasks tasks
+        # {:next_state, :initial_deal_employers, task_data}
         try_exchange(updated)
     end
 
-    def initial_deal_employers(:timeout, task_data) do
-        Logger.info "On timeout"
-        {:next_state, :initial_deal_employers, task_data}
-    end
-
-    def initial_deal_employers(etc, task_data) do
-        Logger.info "initial_deal_employers(#{inspect etc})"
-        {:next_state, :initial_deal_employers, task_data}
+    def wait_send_processes({:go_exchange, from, _task}, data) do
+        GenFSM.send_event(from, {:busy, self()})
+        {:next_state, :wait_send_processes, data, 0}
     end
 
     def try_exchange task_data do
@@ -127,20 +87,36 @@ defmodule Exchanger do
         task_data, @check_offers_timeout}
     end
 
-    def check_offers({:go_exchange, from, other_data}, task_data) do
-        Logger.info "check_offers"
-        if should_exchange?(task_data, other_data) do
-            # Logger.info "We should exchange"
-            # {new, oth_new} = Tasks.exchange(task_data, other_data)
-            # GenFSM.send_event(from, {:go, self(), oth_new})
-            # {:next_state,
-            #  :make_offer, {task_data, new},
-            #  @make_offer_timeout}
-        else
-            Logger.info "We shouldn't exchange"
-            GenFSM.send_event(from, :no)
-            try_exchange(task_data)
+    def check_offers({:go_exchange, from, task2}, task1) do
+        indexes = for i1 <- (for i <-[0..length(task1.employers)], do: i), i2 <-(for i <-[0..length(task2.employers)], do: i), do: {i1,i2}
+        pairs = Enum.zip(indexes,  Enum.map(indexes,fn({i,j})->should_exchange?(task1,task2,i,j) end) )
+        |>Enum.filter(fn({_,flag})->flag end)
+        if length(pairs) > 0 do
+            {{i1,i2},_} = pairs|>Enum.at 0
+            {new_task1,new_task2} = exchange(task1,task2,i1,i2)
+            Logger.info "OUR PIINT: #{inspect new_task1} #{inspect new_task2}"
+            GenFSM.send_event(from, {:go, self(), new_task2})
+            {:next_state,
+             :make_offer, {task1, new_task1},
+             @make_offer_timeout}
+         else
+             Logger.info "We shouldn't exchange"
+             GenFSM.send_event(from, :no)
+             try_exchange(task1)
         end
+        # Logger.info "check_offers"
+        # if should_exchange?(task_data, other_data) do
+        #     # Logger.info "We should exchange"
+        #     # {new, oth_new} = Tasks.exchange(task_data, other_data)
+        #     # GenFSM.send_event(from, {:go, self(), oth_new})
+        #     # {:next_state,
+        #     #  :make_offer, {task_data, new},
+        #     #  @make_offer_timeout}
+        # else
+        #     Logger.info "We shouldn't exchange"
+        #     GenFSM.send_event(from, :no)
+        #     try_exchange(task_data)
+        # end
     end
 
     def check_offers(:timeout, task_data), do: try_exchange(task_data)
@@ -175,8 +151,26 @@ defmodule Exchanger do
         }
     end
 
-    def check_offers_finally({:go_exchange, from, other_data}, task_data) do
+    def check_offers_finally({:go_exchange, from, task2}, task1) do
         Logger.info "Received offer "
+        indexes = for i1 <- (for i <-[0..length(task1.employers)], do: i), i2 <-(for i <-[0..length(task2.employers)], do: i), do: {i1,i2}
+        pairs = Enum.zip(indexes,  Enum.map(indexes,fn({i,j})->should_exchange?(task1,task2,i,j)end))
+        |>Enum.filter(fn({_,flag})->flag end)
+        if length(pairs) > 0 do
+            {{i1,i2},_} = pairs|>Enum.at 0
+
+            {new_task1,new_task2} = exchange(task1,task2,i1,i2)
+            GenFSM.send_event(from, {:go, self(), new_task2})
+            {:next_state,
+             :make_offer_finally, {task1, new_task1},
+             @make_offer_timeout}
+         else
+             Logger.info "We shouldn't exchange"
+             GenFSM.send_event(from, :no)
+             {:next_state,
+              :check_offers_finally, task1,
+              @check_offers_finally_timeout}
+        end
         # case Tasks.try_exchange do
         #     :false ->
         #     {:true, }
@@ -241,8 +235,23 @@ defmodule Exchanger do
         {:stop, :normal, task_data}
     end
 
-    defp should_exchange? _first, _second do
-        :false
+    # def try_exchange task1, task2 do
+    #     indexes = for i1 <- (for i <-[0..length(task1.employers)], do: i), i2 <-(for i <-[0..length(task2.employers)], do: i), do: {i1,i2}
+    #     pairs = Enum.zip(indexes,  Enum.map(indexes,fn({i,j})->should_exchange(task1,task2,i,j)) )
+    #     |>Enum.filter(fn({_,flag})->flag)
+    #     if length(pairs) > 0 do
+    #         {{i1,i2},_} = pairs|>Enum.at 0
+    #         {new_task1,new_task2} = exchange(task1,task2,i1,i2)
+    #
+    #     end
+    #
+    # end
+
+    defp should_exchange? task1, task2, i1, i2 do
+        old_delta = abs(Tasks.estim(task1) - Tasks.estim(task2))
+        {new_task1,new_task2} = exchange(task1,task2,i1,i2)
+        new_delta = abs(Tasks.estim(new_task1) - Tasks.estim(new_task2))
+        old_delta > new_delta
         # {first_new, second_new} = Tasks.exchange(first, second)
         #
         # old_disbalance = [first, second]
@@ -256,22 +265,11 @@ defmodule Exchanger do
         # new_disbalance < old_disbalance
     end
 
-    defp load_data filename do
-        {:ok, list} = filename |> File.read! |> JSON.decode
-        parse_data list
-    end
-
-    defp parse_data kw do
-        emp_lst = kw["employers"]
-        empls = Enum.map(emp_lst, fn dct ->
-            %EmployerData{
-                sql: dct["sql"],
-                frontend: dct["frontend"],
-                backend: dct["backend"]
-            }
-        end)
-        %TaskSpec{
-            employers: empls
-        }
+    def exchange task1, task2, i1, i2 do
+        Logger.info "#{inspect task1}, #{inspect task2}"
+        rep1 = task1.employers|>Enum.at i1
+        rep2 = task2.employers|>Enum.at i2
+        { %{task1 | employers: List.replace_at(task1.employers,i1,rep2)},
+    %{task2 | employers: List.replace_at(task2.employers,i2,rep1)}  }
     end
 end
