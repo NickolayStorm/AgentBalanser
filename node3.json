@@ -1,4 +1,19 @@
 {
-	"task": 15,
-	"employers": [2, 6, 3, 3]
+	"employers": [
+		{
+			"sql": 4,
+			"frontend": 5,
+			"backend": 2
+		},
+		{
+			"sql": 4,
+			"frontend": 5,
+			"backend": 2
+		},
+		{
+			"sql": 4,
+			"frontend": 5,
+			"backend": 2
+		}
+	]
 }
