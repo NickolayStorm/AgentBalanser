@@ -15,7 +15,6 @@ defprotocol TaskProto do
     Returns: (True, updatet it) if found
              False              otherwise
     """
-    def try_exchange(it, empl)
     def push_employers(it, empls)
     def push_remaining_tasks(it, tasks)
     def pop_remaining_task(it)
@@ -24,12 +23,9 @@ defprotocol TaskProto do
 end
 
 defimpl TaskProto, for: TaskSpec do
-    def try_exchange(_it, _empl) do
-        # Some magic
-        :false
-    end
+    require Logger
     def rollback_tasks(it) do
-        %{it | remaining_task: it.all_tasks}
+        %{it | remaining_tasks: it.all_tasks}
     end
     def push_employers(it, empl) do
         %{it | employers: [empl] + [it.employers]}
@@ -46,7 +42,10 @@ defimpl TaskProto, for: TaskSpec do
     end
 
     def estim(it) do
-        Enum.map(it.employers, fn(x)->x.sql + x.frontend + x.backend end) |> Enum.sum
+        # Logger.info("Estim #{inspect it}")
+        {Enum.map(it.employers, fn(x)-> x.sql end) |> Enum.sum,
+        Enum.map(it.employers, fn(x)-> x.frontend end) |> Enum.sum,
+        Enum.map(it.employers, fn(x)-> x.backend end) |> Enum.sum}
     end
 
 end

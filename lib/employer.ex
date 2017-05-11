@@ -26,7 +26,6 @@ defmodule Employer do
         # If not empty
         sorted = sort_by_skill(invitations)
         [pid | other] = sorted
-        Logger.info "разложено"
         GenFSM.send_event(pid, {:go, data, self()})
         Logger.info "Sent"
         {

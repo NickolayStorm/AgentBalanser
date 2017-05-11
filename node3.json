@@ -1,22 +1,17 @@
 {
 	"employers": [
 		{
-			"sql": 3,
+			"sql": 4,
 			"frontend": 5,
 			"backend": 2
 		},
 		{
-			"sql": 3,
+			"sql": 4,
 			"frontend": 5,
 			"backend": 2
 		},
 		{
-			"sql": 3,
-			"frontend": 5,
-			"backend": 2
-		},
-		{
-			"sql": 3,
+			"sql": 4,
 			"frontend": 5,
 			"backend": 2
 		}

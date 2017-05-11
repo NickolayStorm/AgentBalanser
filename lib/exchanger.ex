@@ -11,20 +11,24 @@ defmodule Exchanger do
 
     def start_link task_data do
         Logger.info "Exchanger.start_link start"
-        {:ok, pid} = GenFSM.start_link(__MODULE__, task_data, [{:debug, [:log, :trace]}])
+        {:ok, pid} = GenFSM.start_link(__MODULE__, task_data) #, [{:debug, [:log, :trace]}])
         Logger.info "Exchanger.start_link finish"
         pid
     end
 
     def init(task_data) do
         Logger.info "Exchanger.init"
-        {:ok, :wait_send_processes, task_data, 3_000}
+        {:ok, :wait_send_processes, task_data, 4_000}
     end
 
     def wait_send_processes(:timeout, task_data) do
         Logger.info "On timeout"
         tasks = Agent.get_and_update({:global, :tasks}, fn lst -> {lst, lst} end)
+        Logger.info(inspect tasks)
+        Logger.info "wait_send_proc: #{inspect task_data}"
         updated = task_data |> Tasks.push_remaining_tasks tasks
+        updated = %{updated | all_tasks: tasks}
+        Logger.info "wait_send_proc: #{inspect updated}"
         # {:next_state, :initial_deal_employers, task_data}
         try_exchange(updated)
     end
@@ -37,6 +41,7 @@ defmodule Exchanger do
     def try_exchange task_data do
         Logger.info "try_exchange"
         r = task_data |> Tasks.pop_remaining_task
+        Logger.info "try_exchange: #{inspect r}"
         if is_nil(r) do
             Logger.info "We tried all tasks!"
             {:next_state, :check_offers_finally,
@@ -44,6 +49,7 @@ defmodule Exchanger do
         else
             {t, without_task} = r
             Logger.info "Only #{length(without_task.remaining_tasks)+1} tasks left"
+            Logger.info "try_exchange #{inspect without_task}"
             if t != self() do
                 GenFSM.send_event(t, {:go_exchange, self(), without_task})
                 {:next_state, :wait_agreement, without_task,
@@ -80,7 +86,7 @@ defmodule Exchanger do
 
     def wait_agreement({:busy, from}, without_task) do
         Logger.info "It's busy"
-        Process.sleep(100)
+        Process.sleep(100 + :rand.uniform(100))
         task_data = without_task
                  |> Tasks.push_remaining_tasks([from])
         {:next_state, :check_offers,
@@ -88,16 +94,20 @@ defmodule Exchanger do
     end
 
     def check_offers({:go_exchange, from, task2}, task1) do
-        indexes = for i1 <- (for i <-[0..length(task1.employers)], do: i), i2 <-(for i <-[0..length(task2.employers)], do: i), do: {i1,i2}
+        indexes = for i1 <- (for i <- 0..length(task1.employers)-1, do: i), i2 <-(for i <- 0..length(task2.employers)-1, do: i), do: {i1,i2}
         pairs = Enum.zip(indexes,  Enum.map(indexes,fn({i,j})->should_exchange?(task1,task2,i,j) end) )
         |>Enum.filter(fn({_,flag})->flag end)
         if length(pairs) > 0 do
-            {{i1,i2},_} = pairs|>Enum.at 0
+            {{i1,i2},_} = pairs |> Enum.at 0
+            Logger.info "Before: #{inspect task1} #{inspect task2}"
             {new_task1,new_task2} = exchange(task1,task2,i1,i2)
-            Logger.info "OUR PIINT: #{inspect new_task1} #{inspect new_task2}"
-            GenFSM.send_event(from, {:go, self(), new_task2})
+            Logger.info "After exchange: #{inspect new_task1} #{inspect new_task2}"
+            new_new_task1 = new_task1 |> Tasks.rollback_tasks
+            new_new_task2 = new_task2 |> Tasks.rollback_tasks
+            Logger.info "After rollback: #{inspect new_new_task1} #{inspect new_new_task2}"
+            GenFSM.send_event(from, {:go, self(), new_new_task2})
             {:next_state,
-             :make_offer, {task1, new_task1},
+             :make_offer, {task1, new_new_task1},
              @make_offer_timeout}
          else
              Logger.info "We shouldn't exchange"
@@ -153,7 +163,7 @@ defmodule Exchanger do
 
     def check_offers_finally({:go_exchange, from, task2}, task1) do
         Logger.info "Received offer "
-        indexes = for i1 <- (for i <-[0..length(task1.employers)], do: i), i2 <-(for i <-[0..length(task2.employers)], do: i), do: {i1,i2}
+        indexes = for i1 <- (for i <- 0..length(task1.employers)-1, do: i), i2 <- (for i <- 0..length(task2.employers)-1, do: i), do: {i1,i2}
         pairs = Enum.zip(indexes,  Enum.map(indexes,fn({i,j})->should_exchange?(task1,task2,i,j)end))
         |>Enum.filter(fn({_,flag})->flag end)
         if length(pairs) > 0 do
@@ -248,28 +258,23 @@ defmodule Exchanger do
     # end
 
     defp should_exchange? task1, task2, i1, i2 do
-        old_delta = abs(Tasks.estim(task1) - Tasks.estim(task2))
+        local_diff = fn({a,b,c},{d,e,f}) ->
+                        {abs(a-d),abs(b-e),abs(c-f)}
+                    end
+        #old_delta
+        {od1, od2, od3} = local_diff.(Tasks.estim(task1),Tasks.estim(task2))
         {new_task1,new_task2} = exchange(task1,task2,i1,i2)
-        new_delta = abs(Tasks.estim(new_task1) - Tasks.estim(new_task2))
-        old_delta > new_delta
-        # {first_new, second_new} = Tasks.exchange(first, second)
-        #
-        # old_disbalance = [first, second]
-        #                 |> Enum.map(&Tasks.disbalance &1)
-        #                 |> Enum.sum
-        #
-        # new_disbalance = [first_new, second_new]
-        #                 |> Enum.map(&Tasks.disbalance &1)
-        #                 |> Enum.sum
-        #
-        # new_disbalance < old_disbalance
+        #new_delta
+        {nd1,nd2,nd3}= local_diff.(Tasks.estim(new_task1),Tasks.estim(new_task2))
+        #old_delta > new_delta
+        od1+od2+od3 > nd1+nd2+nd3
     end
 
     def exchange task1, task2, i1, i2 do
-        Logger.info "#{inspect task1}, #{inspect task2}"
+        # Logger.info "#{inspect task1}, #{inspect task2}"
         rep1 = task1.employers|>Enum.at i1
         rep2 = task2.employers|>Enum.at i2
         { %{task1 | employers: List.replace_at(task1.employers,i1,rep2)},
-    %{task2 | employers: List.replace_at(task2.employers,i2,rep1)}  }
+          %{task2 | employers: List.replace_at(task2.employers,i2,rep1)}  }
     end
 end

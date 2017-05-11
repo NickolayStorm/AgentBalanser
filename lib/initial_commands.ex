@@ -2,12 +2,12 @@ defmodule Commands do
     use GenFSM
     require Logger
 
-    @max_empls 4
+    @max_empls 3
     @timeout 10_000
 
     def start_link filename, server do
         manager = initialize filename, server
-        {:ok, pid} = GenFSM.start_link(__MODULE__, [], [{:debug, [:log, :trace]}])
+        {:ok, pid} = GenFSM.start_link(__MODULE__, [])#, [{:debug, [:log, :trace]}])
         GenServer.cast(manager, {:register_task, pid})
         pid
     end
