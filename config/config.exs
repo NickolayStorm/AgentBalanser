@@ -30,7 +30,7 @@ config :logger,
 
 
   config :kernel,
-      net_ticktime: 240
+      net_ticktime: 1000
 
 
 # It is also possible to import configuration files, relative to this

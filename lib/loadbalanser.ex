@@ -20,6 +20,7 @@ defmodule Manager do
     @timeout 15_000
 
     def start_link do
+        :net_kernel.set_net_ticktime 1000
         name = Application.get_env(:loadbalanser, :manager_p_name)
         {:ok, pid} = GenServer.start_link(__MODULE__, []) # state is tasks
         :global.register_name(name, pid)
